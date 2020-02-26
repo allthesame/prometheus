@@ -2571,7 +2571,7 @@ func TestDBQueryDoesntSeeAppendsAfterCreation(t *testing.T) {
 
 	app := db.Appender()
 	_, err = app.Add(labels.FromStrings("foo", "bar"), 0, 0)
-	testutil.Ok(t, err)
+	testutil.Ok(t, err) // TODO(beorn7): Maybe test with the querier created between the Add and the Commit.
 	// This commit is after the querier is created, so should not be returned.
 	err = app.Commit()
 	testutil.Ok(t, err)

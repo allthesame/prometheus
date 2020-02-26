@@ -1987,7 +1987,7 @@ func (s *memSeries) iterator(id int, isoState *IsolationState, it chunkenc.Itera
 		msIter.i = -1
 		msIter.total = numSamples
 		msIter.stopAfter = stopAfter
-		msIter.bufferedSamples = 4
+		msIter.bufferedSamples = 4 // TODO(beorn7): Make sure there is a test if there are fewer than 4 samples.
 		msIter.buf = s.sampleBuf
 		return msIter
 	}
