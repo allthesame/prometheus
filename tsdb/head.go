@@ -215,17 +215,17 @@ func newHeadMetrics(h *Head, r prometheus.Registerer) *headMetrics {
 	})
 	m.lowWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_isolation_low_watermark",
-		Help: "The lowest TSDB write ID that is still referenced.",
+		Help: "The lowest TSDB append ID that is still referenced.",
 	}, func() float64 {
 		return float64(h.iso.lowWatermark())
 	})
 	m.highWatermark = prometheus.NewGaugeFunc(prometheus.GaugeOpts{
 		Name: "prometheus_tsdb_isolation_high_watermark",
-		Help: "The highest TSDB write ID that has been given out.",
+		Help: "The highest TSDB append ID that has been given out.",
 	}, func() float64 {
-		h.iso.writeMtx.Lock()
-		defer h.iso.writeMtx.Unlock()
-		return float64(h.iso.lastWriteID)
+		h.iso.appendMtx.Lock()
+		defer h.iso.appendMtx.Unlock()
+		return float64(h.iso.lastAppendID)
 	})
 
 	if r != nil {
@@ -832,7 +832,7 @@ type initAppender struct {
 	app  storage.Appender
 	head *Head
 
-	writeID, cleanupWriteIDsBelow uint64
+	appendID, cleanupAppendIDsBelow uint64
 }
 
 func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -840,7 +840,7 @@ func (a *initAppender) Add(lset labels.Labels, t int64, v float64) (uint64, erro
 		return a.app.Add(lset, t, v)
 	}
 	a.head.initTime(t)
-	a.app = a.head.appender(a.writeID, a.cleanupWriteIDsBelow)
+	a.app = a.head.appender(a.appendID, a.cleanupAppendIDsBelow)
 
 	return a.app.Add(lset, t, v)
 }
@@ -870,33 +870,33 @@ func (a *initAppender) Rollback() error {
 func (h *Head) Appender() storage.Appender {
 	h.metrics.activeAppenders.Inc()
 
-	writeID := h.iso.newWriteID()
-	cleanupWriteIDsBelow := h.iso.lowWatermark()
+	appendID := h.iso.newAppendID()
+	cleanupAppendIDsBelow := h.iso.lowWatermark()
 
 	// The head cache might not have a starting point yet. The init appender
 	// picks up the first appended timestamp as the base.
 	if h.MinTime() == math.MaxInt64 {
 		return &initAppender{
-			head:                 h,
-			writeID:              writeID,
-			cleanupWriteIDsBelow: cleanupWriteIDsBelow,
+			head:                  h,
+			appendID:              appendID,
+			cleanupAppendIDsBelow: cleanupAppendIDsBelow,
 		}
 	}
-	return h.appender(writeID, cleanupWriteIDsBelow)
+	return h.appender(appendID, cleanupAppendIDsBelow)
 }
 
-func (h *Head) appender(writeID, cleanupWriteIDsBelow uint64) *headAppender {
+func (h *Head) appender(appendID, cleanupAppendIDsBelow uint64) *headAppender {
 	return &headAppender{
 		head: h,
 		// Set the minimum valid time to whichever is greater the head min valid time or the compaction window.
 		// This ensures that no samples will be added within the compaction window to avoid races.
-		minValidTime:         max(atomic.LoadInt64(&h.minValidTime), h.MaxTime()-h.chunkRange/2),
-		mint:                 math.MaxInt64,
-		maxt:                 math.MinInt64,
-		samples:              h.getAppendBuffer(),
-		sampleSeries:         h.getSeriesBuffer(),
-		writeID:              writeID,
-		cleanupWriteIDsBelow: cleanupWriteIDsBelow,
+		minValidTime:          max(atomic.LoadInt64(&h.minValidTime), h.MaxTime()-h.chunkRange/2),
+		mint:                  math.MaxInt64,
+		maxt:                  math.MinInt64,
+		samples:               h.getAppendBuffer(),
+		sampleSeries:          h.getSeriesBuffer(),
+		appendID:              appendID,
+		cleanupAppendIDsBelow: cleanupAppendIDsBelow,
 	}
 }
 
@@ -955,7 +955,7 @@ type headAppender struct {
 	samples      []record.RefSample
 	sampleSeries []*memSeries
 
-	writeID, cleanupWriteIDsBelow uint64
+	appendID, cleanupAppendIDsBelow uint64
 }
 
 func (a *headAppender) Add(lset labels.Labels, t int64, v float64) (uint64, error) {
@@ -1057,8 +1057,8 @@ func (a *headAppender) Commit() error {
 	for i, s := range a.samples {
 		series = a.sampleSeries[i]
 		series.Lock()
-		ok, chunkCreated := series.append(s.T, s.V, a.writeID)
-		series.cleanupWriteIDsBelow(a.cleanupWriteIDsBelow)
+		ok, chunkCreated := series.append(s.T, s.V, a.appendID)
+		series.cleanupAppendIDsBelow(a.cleanupAppendIDsBelow)
 		series.pendingCommit = false
 		series.Unlock()
 
@@ -1073,7 +1073,7 @@ func (a *headAppender) Commit() error {
 
 	a.head.metrics.samplesAppended.Add(float64(total))
 	a.head.updateMinMaxTime(a.mint, a.maxt)
-	a.head.iso.closeWrite(a.writeID)
+	a.head.iso.closeAppend(a.appendID)
 
 	return nil
 }
@@ -1854,8 +1854,8 @@ func (s *memSeries) truncateChunksBefore(mint int64) (removed int) {
 }
 
 // append adds the sample (t, v) to the series. The caller also has to provide
-// the writeID for isolation.
-func (s *memSeries) append(t int64, v float64, writeID uint64) (success, chunkCreated bool) {
+// the appendID for isolation.
+func (s *memSeries) append(t int64, v float64, appendID uint64) (success, chunkCreated bool) {
 	// Based on Gorilla white papers this offers near-optimal compression ratio
 	// so anything bigger that this has diminishing returns and increases
 	// the time range within which we have to decompress all samples.
@@ -1892,19 +1892,19 @@ func (s *memSeries) append(t int64, v float64, writeID uint64) (success, chunkCr
 	s.sampleBuf[2] = s.sampleBuf[3]
 	s.sampleBuf[3] = sample{t: t, v: v}
 
-	s.txs.add(writeID)
+	s.txs.add(appendID)
 
 	return true, chunkCreated
 }
 
-// cleanupWriteIDsBelow cleans up older writeIds. Has to be called after acquiring
-// lock.
-func (s *memSeries) cleanupWriteIDsBelow(bound uint64) {
-	s.txs.cleanupWriteIDsBelow(bound)
+// cleanupAppendIDsBelow cleans up older appendIDs. Has to be called after
+// acquiring lock.
+func (s *memSeries) cleanupAppendIDsBelow(bound uint64) {
+	s.txs.cleanupAppendIDsBelow(bound)
 }
 
-// computeChunkEndTime estimates the end timestamp based the beginning of a chunk,
-// its current timestamp and the upper bound up to which we insert data.
+// computeChunkEndTime estimates the end timestamp based the beginning of a
+// chunk, its current timestamp and the upper bound up to which we insert data.
 // It assumes that the time range is 1/4 full.
 func computeChunkEndTime(start, cur, max int64) int64 {
 	a := (max - start) / ((cur - start + 1) * 4)
@@ -1916,9 +1916,10 @@ func computeChunkEndTime(start, cur, max int64) int64 {
 
 func (s *memSeries) iterator(id int, isoState *IsolationState, it chunkenc.Iterator) chunkenc.Iterator {
 	c := s.chunk(id)
-	// TODO(fabxc): Work around! A querier may have retrieved a pointer to a series' chunk,
-	// which got then garbage collected before it got accessed.
-	// We must ensure to not garbage collect as long as any readers still hold a reference.
+	// TODO(fabxc): Work around! A querier may have retrieved a pointer to a
+	// series's chunk, which got then garbage collected before it got
+	// accessed.  We must ensure to not garbage collect as long as any
+	// readers still hold a reference.
 	if c == nil {
 		return chunkenc.NewNopIterator()
 	}
@@ -1941,20 +1942,20 @@ func (s *memSeries) iterator(id int, isoState *IsolationState, it chunkenc.Itera
 
 		// Removing the extra transactionIDs that are relevant for samples that
 		// come after this chunk, from the total transactionIDs.
-		writeIDsToConsider := s.txs.txIDCount - (totalSamples - (previousSamples + numSamples))
+		appendIDsToConsider := s.txs.txIDCount - (totalSamples - (previousSamples + numSamples))
 
-		// Iterate over the writeIDs, find the first one that the isolation state says not
+		// Iterate over the appendIDs, find the first one that the isolation state says not
 		// to return.
 		it := s.txs.iterator()
-		for index := 0; index < writeIDsToConsider; index++ {
-			writeID := it.At()
-			if writeID <= isoState.maxWriteID { // Easy check first.
-				if _, ok := isoState.incompleteWrites[writeID]; !ok {
+		for index := 0; index < appendIDsToConsider; index++ {
+			appendID := it.At()
+			if appendID <= isoState.maxAppendID { // Easy check first.
+				if _, ok := isoState.incompleteAppends[appendID]; !ok {
 					it.Next()
 					continue
 				}
 			}
-			stopAfter = numSamples - (writeIDsToConsider - index)
+			stopAfter = numSamples - (appendIDsToConsider - index)
 			if stopAfter < 0 {
 				stopAfter = 0 // Stopped in a previous chunk.
 			}

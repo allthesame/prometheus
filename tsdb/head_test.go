@@ -1426,12 +1426,12 @@ func TestMemSeriesIsolation(t *testing.T) {
 	testutil.Ok(t, err)
 	defer hb.Close()
 
-	lastValue := func(maxWriteId uint64) int {
+	lastValue := func(maxAppendID uint64) int {
 		idx, err := hb.Index(hb.MinTime(), hb.MaxTime())
 		testutil.Ok(t, err)
 
 		iso := hb.iso.State()
-		iso.maxWriteID = maxWriteId
+		iso.maxAppendID = maxAppendID
 
 		querier := &blockQuerier{
 			mint:       0,
@@ -1461,7 +1461,7 @@ func TestMemSeriesIsolation(t *testing.T) {
 		// To initialize bounds.
 		if hb.MinTime() == math.MaxInt64 {
 			t.Log("new")
-			app = &initAppender{head: hb, writeID: uint64(i), cleanupWriteIDsBelow: 0}
+			app = &initAppender{head: hb, appendID: uint64(i), cleanupAppendIDsBelow: 0}
 		} else {
 			t.Log("method")
 			app = hb.appender(uint64(i), 0)
@@ -1472,7 +1472,7 @@ func TestMemSeriesIsolation(t *testing.T) {
 		testutil.Ok(t, app.Commit())
 	}
 
-	// Test simple cases in different chunks when no writeId cleanup has been performed.
+	// Test simple cases in different chunks when no appendID cleanup has been performed.
 	testutil.Equals(t, 10, lastValue(10))
 	testutil.Equals(t, 130, lastValue(130))
 	testutil.Equals(t, 160, lastValue(160))
@@ -1482,15 +1482,15 @@ func TestMemSeriesIsolation(t *testing.T) {
 	testutil.Equals(t, 995, lastValue(995))
 	testutil.Equals(t, 999, lastValue(999))
 
-	// Cleanup writeIds below 500.
+	// Cleanup appendIDs below 500.
 	app := hb.appender(uint64(i), 500)
 	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
 	testutil.Ok(t, err)
 	testutil.Ok(t, app.Commit())
 	i++
 
-	// We should not get queries with a maxWriteId below 500 after the cleanup,
-	// but they only take the remaining writeIds into account.
+	// We should not get queries with a maxAppendID below 500 after the cleanup,
+	// but they only take the remaining appendIDs into account.
 	testutil.Equals(t, 499, lastValue(10))
 	testutil.Equals(t, 499, lastValue(130))
 	testutil.Equals(t, 499, lastValue(160))
@@ -1499,8 +1499,8 @@ func TestMemSeriesIsolation(t *testing.T) {
 	testutil.Equals(t, 995, lastValue(995))
 	testutil.Equals(t, 999, lastValue(999))
 
-	// Cleanup writeIds below 1000, which means the sample buffer is
-	// the only thing with writeIds.
+	// Cleanup appendIDs below 1000, which means the sample buffer is
+	// the only thing with appendIDs.
 	app = hb.appender(uint64(i), 1000)
 	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
 	testutil.Ok(t, err)

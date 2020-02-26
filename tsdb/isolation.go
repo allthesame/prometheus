@@ -19,11 +19,11 @@ import (
 
 // IsolationState holds the isolation information.
 type IsolationState struct {
-	// We will ignore all writes above the max, or that are incomplete.
-	maxWriteID       uint64
-	incompleteWrites map[uint64]struct{}
-	lowWaterMark     uint64 // Lowest of incompleteWrites/maxWriteId.
-	isolation        *isolation
+	// We will ignore all appends above the max, or that are incomplete.
+	maxAppendID       uint64
+	incompleteAppends map[uint64]struct{}
+	lowWaterMark      uint64 // Lowest of incompleteAppends/maxAppendID.
+	isolation         *isolation
 
 	// Doubly linked list of active reads.
 	next *IsolationState
@@ -40,14 +40,14 @@ func (i *IsolationState) Close() {
 
 // isolation is the global isolation state.
 type isolation struct {
-	// Mutex for accessing lastWriteId and writesOpen.
-	writeMtx sync.Mutex
-	// Each write is given an internal id.
-	lastWriteID uint64
-	// Which writes are currently in progress.
-	writesOpen map[uint64]struct{}
+	// Mutex for accessing lastAppendID and appendsOpen.
+	appendMtx sync.Mutex
+	// Each append is given an internal id.
+	lastAppendID uint64
+	// Which appends are currently in progress.
+	appendsOpen map[uint64]struct{}
 	// Mutex for accessing readsOpen.
-	// If taking both writeMtx and readMtx, take writeMtx first.
+	// If taking both appendMtx and readMtx, take appendMtx first.
 	readMtx sync.Mutex
 	// All current in use isolationStates. This is a doubly-linked list.
 	readsOpen *IsolationState
@@ -59,38 +59,37 @@ func newIsolation() *isolation {
 	isoState.prev = isoState
 
 	return &isolation{
-		writesOpen: map[uint64]struct{}{},
-		readsOpen:  isoState,
+		appendsOpen: map[uint64]struct{}{},
+		readsOpen:   isoState,
 	}
 }
 
-// lowWatermark returns the writeId below which
-// we no longer need to track which writes were from
-// which writeId.
+// lowWatermark returns the appendID below which we no longer need to track
+// which appends were from which appendID.
 func (i *isolation) lowWatermark() uint64 {
-	i.writeMtx.Lock() // Take writeMtx first.
-	defer i.writeMtx.Unlock()
+	i.appendMtx.Lock() // Take appendMtx first.
+	defer i.appendMtx.Unlock()
 	i.readMtx.Lock()
 	defer i.readMtx.Unlock()
 	if i.readsOpen.prev == i.readsOpen {
-		return i.lastWriteID
+		return i.lastAppendID
 	}
 	return i.readsOpen.prev.lowWaterMark
 }
 
 // State returns an object used to control isolation
-// between a query and writes. Must be closed when complete.
+// between a query and appends. Must be closed when complete.
 func (i *isolation) State() *IsolationState {
-	i.writeMtx.Lock() // Take write mutex before read mutex.
-	defer i.writeMtx.Unlock()
+	i.appendMtx.Lock() // Take append mutex before read mutex.
+	defer i.appendMtx.Unlock()
 	isoState := &IsolationState{
-		maxWriteID:       i.lastWriteID,
-		lowWaterMark:     i.lastWriteID,
-		incompleteWrites: make(map[uint64]struct{}, len(i.writesOpen)),
-		isolation:        i,
+		maxAppendID:       i.lastAppendID,
+		lowWaterMark:      i.lastAppendID,
+		incompleteAppends: make(map[uint64]struct{}, len(i.appendsOpen)),
+		isolation:         i,
 	}
-	for k := range i.writesOpen {
-		isoState.incompleteWrites[k] = struct{}{}
+	for k := range i.appendsOpen {
+		isoState.incompleteAppends[k] = struct{}{}
 		if k < isoState.lowWaterMark {
 			isoState.lowWaterMark = k
 		}
@@ -105,19 +104,19 @@ func (i *isolation) State() *IsolationState {
 	return isoState
 }
 
-// newWriteID increments the transaction counter and returns a new transaction ID.
-func (i *isolation) newWriteID() uint64 {
-	i.writeMtx.Lock()
-	defer i.writeMtx.Unlock()
-	i.lastWriteID++
-	i.writesOpen[i.lastWriteID] = struct{}{}
-	return i.lastWriteID
+// newAppendID increments the transaction counter and returns a new transaction ID.
+func (i *isolation) newAppendID() uint64 {
+	i.appendMtx.Lock()
+	defer i.appendMtx.Unlock()
+	i.lastAppendID++
+	i.appendsOpen[i.lastAppendID] = struct{}{}
+	return i.lastAppendID
 }
 
-func (i *isolation) closeWrite(writeID uint64) {
-	i.writeMtx.Lock()
-	defer i.writeMtx.Unlock()
-	delete(i.writesOpen, writeID)
+func (i *isolation) closeAppend(appendID uint64) {
+	i.appendMtx.Lock()
+	defer i.appendMtx.Unlock()
+	delete(i.appendsOpen, appendID)
 }
 
 // The transactionID ring buffer.
@@ -133,7 +132,7 @@ func newTxRing(cap int) *txRing {
 	}
 }
 
-func (txr *txRing) add(writeID uint64) {
+func (txr *txRing) add(appendID uint64) {
 	if txr.txIDCount == len(txr.txIDs) {
 		// Ring buffer is full, expand by doubling.
 		newRing := make([]uint64, txr.txIDCount*2)
@@ -143,11 +142,11 @@ func (txr *txRing) add(writeID uint64) {
 		txr.txIDFirst = 0
 	}
 
-	txr.txIDs[(txr.txIDFirst+txr.txIDCount)%len(txr.txIDs)] = writeID
+	txr.txIDs[(txr.txIDFirst+txr.txIDCount)%len(txr.txIDs)] = appendID
 	txr.txIDCount++
 }
 
-func (txr *txRing) cleanupWriteIDsBelow(bound uint64) {
+func (txr *txRing) cleanupAppendIDsBelow(bound uint64) {
 	pos := txr.txIDFirst
 
 	for txr.txIDCount > 0 {
