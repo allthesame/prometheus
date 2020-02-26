@@ -2601,7 +2601,7 @@ func TestDBQueryDoesntSeeAppendsAfterCreation(t *testing.T) {
 	testutil.Ok(t, err)
 	testutil.Equals(t, map[string][]sample{}, seriesSet)
 
-	// Series exists but has no samples for querier created after Add. TODO(beorn7): Is this expected?!?
+	// Series exists but has no samples for querier created after Add.
 	ss, _, err = querierAfterAddButBeforeCommit.Select(nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
 	testutil.Ok(t, err)
 	_, seriesSet, err = expandSeriesSet(ss)
