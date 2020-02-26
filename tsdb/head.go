@@ -1954,20 +1954,23 @@ func (s *memSeries) iterator(id int, isoState *IsolationState, it chunkenc.Itera
 		}
 	}
 
+	if stopAfter == 0 {
+		return chunkenc.NewNopIterator()
+	}
+
 	if id-s.firstChunkID < len(s.chunks)-1 {
-		// TODO(beorn7): Reviewers, please double-check this section extra carefully.
-		if msIter, ok := it.(*memSafeIterator); ok {
+		if stopAfter == numSamples {
+			return c.chunk.Iterator(it)
+		}
+		if msIter, ok := it.(*stopIterator); ok {
 			msIter.Iterator = c.chunk.Iterator(msIter.Iterator)
 			msIter.i = -1
-			msIter.total = numSamples
 			msIter.stopAfter = stopAfter
-			msIter.bufferedSamples = 0
 			return msIter
 		}
-		return &memSafeIterator{
+		return &stopIterator{
 			Iterator:  c.chunk.Iterator(it),
 			i:         -1,
-			total:     numSamples,
 			stopAfter: stopAfter,
 		}
 	}
@@ -1978,17 +1981,17 @@ func (s *memSeries) iterator(id int, isoState *IsolationState, it chunkenc.Itera
 		msIter.i = -1
 		msIter.total = numSamples
 		msIter.stopAfter = stopAfter
-		msIter.bufferedSamples = 4 // TODO(beorn7): Make sure there is a test if there are fewer than 4 samples.
 		msIter.buf = s.sampleBuf
 		return msIter
 	}
 	return &memSafeIterator{
-		Iterator:        c.chunk.Iterator(it),
-		i:               -1,
-		total:           numSamples,
-		stopAfter:       stopAfter,
-		bufferedSamples: 4,
-		buf:             s.sampleBuf,
+		stopIterator: stopIterator{
+			Iterator:  c.chunk.Iterator(it),
+			i:         -1,
+			stopAfter: stopAfter,
+		},
+		total: numSamples,
+		buf:   s.sampleBuf,
 	}
 }
 
@@ -2006,14 +2009,25 @@ func (mc *memChunk) OverlapsClosedInterval(mint, maxt int64) bool {
 	return mc.minTime <= maxt && mint <= mc.maxTime
 }
 
-type memSafeIterator struct {
+type stopIterator struct {
 	chunkenc.Iterator
 
-	i               int
-	total           int
-	stopAfter       int
-	bufferedSamples int
-	buf             [4]sample
+	i, stopAfter int
+}
+
+func (it *stopIterator) Next() bool {
+	if it.i+1 >= it.stopAfter {
+		return false
+	}
+	it.i++
+	return it.Iterator.Next()
+}
+
+type memSafeIterator struct {
+	stopIterator
+
+	total int
+	buf   [4]sample
 }
 
 func (it *memSafeIterator) Next() bool {
@@ -2021,17 +2035,17 @@ func (it *memSafeIterator) Next() bool {
 		return false
 	}
 	it.i++
-	if it.total-it.i > it.bufferedSamples {
+	if it.total-it.i > 4 {
 		return it.Iterator.Next()
 	}
 	return true
 }
 
 func (it *memSafeIterator) At() (int64, float64) {
-	if it.total-it.i > it.bufferedSamples {
+	if it.total-it.i > 4 {
 		return it.Iterator.At()
 	}
-	s := it.buf[it.bufferedSamples-(it.total-it.i)]
+	s := it.buf[4-(it.total-it.i)]
 	return s.t, s.v
 }
 
