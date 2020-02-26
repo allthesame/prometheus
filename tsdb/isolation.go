@@ -22,7 +22,7 @@ type IsolationState struct {
 	// We will ignore all appends above the max, or that are incomplete.
 	maxAppendID       uint64
 	incompleteAppends map[uint64]struct{}
-	lowWaterMark      uint64 // Lowest of incompleteAppends/maxAppendID.
+	lowWatermark      uint64 // Lowest of incompleteAppends/maxAppendID.
 	isolation         *isolation
 
 	// Doubly linked list of active reads.
@@ -74,7 +74,7 @@ func (i *isolation) lowWatermark() uint64 {
 	if i.readsOpen.prev == i.readsOpen {
 		return i.lastAppendID
 	}
-	return i.readsOpen.prev.lowWaterMark
+	return i.readsOpen.prev.lowWatermark
 }
 
 // State returns an object used to control isolation
@@ -84,14 +84,14 @@ func (i *isolation) State() *IsolationState {
 	defer i.appendMtx.Unlock()
 	isoState := &IsolationState{
 		maxAppendID:       i.lastAppendID,
-		lowWaterMark:      i.lastAppendID,
+		lowWatermark:      i.lastAppendID,
 		incompleteAppends: make(map[uint64]struct{}, len(i.appendsOpen)),
 		isolation:         i,
 	}
 	for k := range i.appendsOpen {
 		isoState.incompleteAppends[k] = struct{}{}
-		if k < isoState.lowWaterMark {
-			isoState.lowWaterMark = k
+		if k < isoState.lowWatermark {
+			isoState.lowWatermark = k
 		}
 	}
 

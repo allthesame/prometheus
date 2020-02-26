@@ -327,8 +327,7 @@ func (h *Head) processWALSamples(
 				}
 				refSeries[s.Ref] = ms
 			}
-			_, chunkCreated := ms.append(s.T, s.V, 0)
-			if chunkCreated {
+			if _, chunkCreated := ms.append(s.T, s.V, 0); chunkCreated {
 				h.metrics.chunksCreated.Inc()
 				h.metrics.chunks.Inc()
 			}
