@@ -2565,34 +2565,59 @@ func TestDBQueryDoesntSeeAppendsAfterCreation(t *testing.T) {
 	testutil.Ok(t, err)
 	defer db.Close()
 
-	querier, err := db.Querier(context.Background(), 0, 1000000)
+	querierBeforeAdd, err := db.Querier(context.Background(), 0, 1000000)
 	testutil.Ok(t, err)
-	defer querier.Close()
+	defer querierBeforeAdd.Close()
 
 	app := db.Appender()
 	_, err = app.Add(labels.FromStrings("foo", "bar"), 0, 0)
-	testutil.Ok(t, err) // TODO(beorn7): Maybe test with the querier created between the Add and the Commit.
-	// This commit is after the querier is created, so should not be returned.
-	err = app.Commit()
 	testutil.Ok(t, err)
 
-	ss, _, err := querier.Select(nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
+	querierAfterAddButBeforeCommit, err := db.Querier(context.Background(), 0, 1000000)
 	testutil.Ok(t, err)
+	defer querierAfterAddButBeforeCommit.Close()
 
+	// None of the queriers should return anything after the Add but before the commit.
+	ss, _, err := querierBeforeAdd.Select(nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
+	testutil.Ok(t, err)
 	_, seriesSet, err := expandSeriesSet(ss)
 	testutil.Ok(t, err)
 	testutil.Equals(t, map[string][]sample{}, seriesSet)
 
-	querier, err = db.Querier(context.Background(), 0, 1000000)
+	ss, _, err = querierAfterAddButBeforeCommit.Select(nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
 	testutil.Ok(t, err)
-	defer querier.Close()
-
-	ss, _, err = querier.Select(nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
-	testutil.Ok(t, err)
-
 	_, seriesSet, err = expandSeriesSet(ss)
 	testutil.Ok(t, err)
-	testutil.Equals(t, seriesSet, map[string][]sample{`{foo="bar"}`: []sample{{t: 0, v: 0}}})
+	testutil.Equals(t, map[string][]sample{}, seriesSet)
+
+	// This commit is after the queriers are created, so should not be returned.
+	err = app.Commit()
+	testutil.Ok(t, err)
+
+	// Nothing returned for querier created before the Add.
+	ss, _, err = querierBeforeAdd.Select(nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
+	testutil.Ok(t, err)
+	_, seriesSet, err = expandSeriesSet(ss)
+	testutil.Ok(t, err)
+	testutil.Equals(t, map[string][]sample{}, seriesSet)
+
+	// Series exists but has no samples for querier created after Add. TODO(beorn7): Is this expected?!?
+	ss, _, err = querierAfterAddButBeforeCommit.Select(nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
+	testutil.Ok(t, err)
+	_, seriesSet, err = expandSeriesSet(ss)
+	testutil.Ok(t, err)
+	testutil.Equals(t, map[string][]sample{`{foo="bar"}`: []sample{}}, seriesSet)
+
+	querierAfterCommit, err := db.Querier(context.Background(), 0, 1000000)
+	testutil.Ok(t, err)
+	defer querierAfterCommit.Close()
+
+	// Samples are returned for querier created after Commit.
+	ss, _, err = querierAfterCommit.Select(nil, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
+	testutil.Ok(t, err)
+	_, seriesSet, err = expandSeriesSet(ss)
+	testutil.Ok(t, err)
+	testutil.Equals(t, map[string][]sample{`{foo="bar"}`: []sample{{t: 0, v: 0}}}, seriesSet)
 }
 
 // TestChunkWriter_ReadAfterWrite ensures that chunk segment are cut at the set segment size and
