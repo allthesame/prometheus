@@ -180,7 +180,7 @@ func (txr *txRing) iterator() *txRingIterator {
 }
 
 // txRingIterator lets you iterate over the ring. It doesn't terminate,
-// it DOESNT terminate.
+// it DOESN'T terminate.
 type txRingIterator struct {
 	ids []uint64
 

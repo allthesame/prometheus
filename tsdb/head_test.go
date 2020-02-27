@@ -1508,6 +1508,19 @@ func TestMemSeriesIsolation(t *testing.T) {
 	testutil.Equals(t, 1001, lastValue(1001))
 	testutil.Equals(t, 1002, lastValue(1002))
 	testutil.Equals(t, 1002, lastValue(1003))
+
+	i++
+	// Cleanup appendIDs below 1001, but with a rollback.
+	app = hb.appender(uint64(i), 1001)
+	_, err = app.Add(labels.FromStrings("foo", "bar"), int64(i), float64(i))
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Rollback())
+	testutil.Equals(t, 1000, lastValue(999))
+	testutil.Equals(t, 1000, lastValue(1000))
+	testutil.Equals(t, 1001, lastValue(1001))
+	testutil.Equals(t, 1002, lastValue(1002))
+	testutil.Equals(t, 1002, lastValue(1003))
+
 }
 
 func TestIsolationRollback(t *testing.T) {

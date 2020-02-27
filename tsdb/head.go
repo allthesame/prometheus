@@ -1075,6 +1075,7 @@ func (a *headAppender) Rollback() error {
 	for i := range a.samples {
 		series = a.sampleSeries[i]
 		series.Lock()
+		series.cleanupAppendIDsBelow(a.cleanupAppendIDsBelow)
 		series.pendingCommit = false
 		series.Unlock()
 	}
