@@ -1212,7 +1212,7 @@ func (h *Head) Chunks() (ChunkReader, error) {
 	return h.chunksRange(math.MinInt64, math.MaxInt64, h.iso.State()), nil
 }
 
-func (h *Head) chunksRange(mint, maxt int64, is *IsolationState) *headChunkReader {
+func (h *Head) chunksRange(mint, maxt int64, is *isolationState) *headChunkReader {
 	if hmin := h.MinTime(); hmin > mint {
 		mint = hmin
 	}
@@ -1272,7 +1272,7 @@ func (h *Head) Close() error {
 type headChunkReader struct {
 	head       *Head
 	mint, maxt int64
-	isoState   *IsolationState
+	isoState   *isolationState
 }
 
 func (h *headChunkReader) Close() error {
@@ -1329,7 +1329,7 @@ type safeChunk struct {
 	chunkenc.Chunk
 	s        *memSeries
 	cid      int
-	isoState *IsolationState
+	isoState *isolationState
 }
 
 func (c *safeChunk) Iterator(reuseIter chunkenc.Iterator) chunkenc.Iterator {
@@ -1905,7 +1905,7 @@ func computeChunkEndTime(start, cur, max int64) int64 {
 	return start + (max-start)/a
 }
 
-func (s *memSeries) iterator(id int, isoState *IsolationState, it chunkenc.Iterator) chunkenc.Iterator {
+func (s *memSeries) iterator(id int, isoState *isolationState, it chunkenc.Iterator) chunkenc.Iterator {
 	c := s.chunk(id)
 	// TODO(fabxc): Work around! A querier may have retrieved a pointer to a
 	// series's chunk, which got then garbage collected before it got

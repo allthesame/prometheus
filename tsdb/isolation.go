@@ -17,8 +17,8 @@ import (
 	"sync"
 )
 
-// IsolationState holds the isolation information.
-type IsolationState struct {
+// isolationState holds the isolation information.
+type isolationState struct {
 	// We will ignore all appends above the max, or that are incomplete.
 	maxAppendID       uint64
 	incompleteAppends map[uint64]struct{}
@@ -26,12 +26,12 @@ type IsolationState struct {
 	isolation         *isolation
 
 	// Doubly linked list of active reads.
-	next *IsolationState
-	prev *IsolationState
+	next *isolationState
+	prev *isolationState
 }
 
 // Close closes the state.
-func (i *IsolationState) Close() {
+func (i *isolationState) Close() {
 	i.isolation.readMtx.Lock()
 	defer i.isolation.readMtx.Unlock()
 	i.next.prev = i.prev
@@ -50,11 +50,11 @@ type isolation struct {
 	// If taking both appendMtx and readMtx, take appendMtx first.
 	readMtx sync.Mutex
 	// All current in use isolationStates. This is a doubly-linked list.
-	readsOpen *IsolationState
+	readsOpen *isolationState
 }
 
 func newIsolation() *isolation {
-	isoState := &IsolationState{}
+	isoState := &isolationState{}
 	isoState.next = isoState
 	isoState.prev = isoState
 
@@ -79,10 +79,10 @@ func (i *isolation) lowWatermark() uint64 {
 
 // State returns an object used to control isolation
 // between a query and appends. Must be closed when complete.
-func (i *isolation) State() *IsolationState {
+func (i *isolation) State() *isolationState {
 	i.appendMtx.Lock() // Take append mutex before read mutex.
 	defer i.appendMtx.Unlock()
-	isoState := &IsolationState{
+	isoState := &isolationState{
 		maxAppendID:       i.lastAppendID,
 		lowWatermark:      i.lastAppendID,
 		incompleteAppends: make(map[uint64]struct{}, len(i.appendsOpen)),
