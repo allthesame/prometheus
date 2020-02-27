@@ -1079,10 +1079,11 @@ func (a *headAppender) Rollback() error {
 		series.Unlock()
 	}
 	a.head.putAppendBuffer(a.samples)
+	a.samples = nil
+	a.head.iso.closeAppend(a.appendID)
 
 	// Series are created in the head memory regardless of rollback. Thus we have
 	// to log them to the WAL in any case.
-	a.samples = nil
 	return a.log()
 }
 

@@ -71,10 +71,16 @@ func (i *isolation) lowWatermark() uint64 {
 	defer i.appendMtx.Unlock()
 	i.readMtx.Lock()
 	defer i.readMtx.Unlock()
-	if i.readsOpen.prev == i.readsOpen {
-		return i.lastAppendID
+	if i.readsOpen.prev != i.readsOpen {
+		return i.readsOpen.prev.lowWatermark
 	}
-	return i.readsOpen.prev.lowWatermark
+	lw := i.lastAppendID
+	for k := range i.appendsOpen {
+		if k < lw {
+			lw = k
+		}
+	}
+	return lw
 }
 
 // State returns an object used to control isolation

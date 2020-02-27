@@ -1459,10 +1459,8 @@ func TestMemSeriesIsolation(t *testing.T) {
 		var app storage.Appender
 		// To initialize bounds.
 		if hb.MinTime() == math.MaxInt64 {
-			t.Log("new")
 			app = &initAppender{head: hb, appendID: uint64(i), cleanupAppendIDsBelow: 0}
 		} else {
-			t.Log("method")
 			app = hb.appender(uint64(i), 0)
 		}
 
@@ -1510,4 +1508,63 @@ func TestMemSeriesIsolation(t *testing.T) {
 	testutil.Equals(t, 1001, lastValue(1001))
 	testutil.Equals(t, 1002, lastValue(1002))
 	testutil.Equals(t, 1002, lastValue(1003))
+}
+
+func TestIsolationRollback(t *testing.T) {
+	// Rollback after a failed append and test if the low watermark has progressed anyway.
+	hb, err := NewHead(nil, nil, nil, 1000, DefaultStripeSize)
+	testutil.Ok(t, err)
+	defer hb.Close()
+
+	app := hb.Appender()
+	_, err = app.Add(labels.FromStrings("foo", "bar"), 0, 0)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+	testutil.Equals(t, uint64(1), hb.iso.lowWatermark())
+
+	app = hb.Appender()
+	_, err = app.Add(labels.FromStrings("foo", "bar"), 1, 1)
+	testutil.Ok(t, err)
+	_, err = app.Add(labels.FromStrings("foo", "bar", "foo", "baz"), 2, 2)
+	testutil.NotOk(t, err)
+	testutil.Ok(t, app.Rollback())
+	testutil.Equals(t, uint64(2), hb.iso.lowWatermark())
+
+	app = hb.Appender()
+	_, err = app.Add(labels.FromStrings("foo", "bar"), 3, 3)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app.Commit())
+	testutil.Equals(t, uint64(3), hb.iso.lowWatermark(), "Low watermark should proceed to 3 even if append #2 was rolled back.")
+}
+
+func TestIsolationLowWatermarkMonotonous(t *testing.T) {
+	hb, err := NewHead(nil, nil, nil, 1000, DefaultStripeSize)
+	testutil.Ok(t, err)
+	defer hb.Close()
+
+	app1 := hb.Appender()
+	_, err = app1.Add(labels.FromStrings("foo", "bar"), 0, 0)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app1.Commit())
+	testutil.Equals(t, uint64(1), hb.iso.lowWatermark())
+
+	app1 = hb.Appender()
+	_, err = app1.Add(labels.FromStrings("foo", "bar"), 1, 1)
+	testutil.Ok(t, err)
+	testutil.Equals(t, uint64(2), hb.iso.lowWatermark(), "Low watermark should be two, even if append is not commited yet.")
+
+	app2 := hb.Appender()
+	_, err = app2.Add(labels.FromStrings("foo", "baz"), 1, 1)
+	testutil.Ok(t, err)
+	testutil.Ok(t, app2.Commit())
+	testutil.Equals(t, uint64(2), hb.iso.lowWatermark(), "Low watermark should stay two because app1 is not commited yet.")
+
+	is := hb.iso.State()
+	testutil.Equals(t, uint64(2), hb.iso.lowWatermark(), "After simulated read (iso state retrieved), low watermark should stay at 2.")
+
+	testutil.Ok(t, app1.Commit())
+	testutil.Equals(t, uint64(2), hb.iso.lowWatermark(), "Even after app1 is commited, low watermark should stay at 2 because read is still ongoing.")
+
+	is.Close()
+	testutil.Equals(t, uint64(3), hb.iso.lowWatermark(), "After read has finished (iso state closed), low watermark should jump to three.")
 }
